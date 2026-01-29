@@ -12,6 +12,7 @@ Fine-tune Google's **MedSigLIP** (Medical SigLIP Vision-Language Model) for dete
 
 This repository contains a complete pipeline for fine-tuning Google's MedSigLIP model specifically for nail disease classification. The notebook includes:
 
+✅ Hugging Face authentication (NEW!)  
 ✅ Data loading and preprocessing  
 ✅ MedSigLIP model fine-tuning  
 ✅ Custom classification head training  
@@ -68,15 +69,30 @@ Download from these sources:
 
 ## 🚀 Quick Start
 
+### ⚠️ IMPORTANT: Hugging Face Authentication Required
+
+MedSigLIP is a **gated model** on Hugging Face. You need authentication:
+
+**[📚 Complete Setup Guide → HUGGING_FACE_SETUP.md](HUGGING_FACE_SETUP.md)**
+
+**Quick steps:**
+1. Create [Hugging Face account](https://huggingface.co/signup)
+2. Request access to [google/MedSigLIP-2B](https://huggingface.co/google/MedSigLIP-2B)
+3. Generate token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+4. Run the first cell in the notebook to login
+
+---
+
 ### Option 1: Run in Google Colab (Recommended)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/isumenuka/medsiglip-nail-disease-finetuning/blob/MedSigLIP-Fine-tuning/medsiglip_nail_disease_finetuning.ipynb)
 
 1. Click the Colab badge above
-2. Upload your data to Google Drive or Colab
-3. Update data paths in the notebook
-4. Select **GPU (T4 or V100)** from Runtime → Change Runtime Type
-5. Run all cells!
+2. **RUN FIRST CELL**: Hugging Face authentication
+3. Upload your data to Google Drive or Colab
+4. Update data paths in the notebook
+5. Select **GPU (T4 or V100)** from Runtime → Change Runtime Type
+6. Run all cells!
 
 ### Option 2: Local Setup
 
@@ -93,6 +109,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
+# Setup Hugging Face token
+huggingface-cli login
+
 # Run Jupyter
 jupyter notebook medsiglip_nail_disease_finetuning.ipynb
 ```
@@ -104,12 +123,13 @@ jupyter notebook medsiglip_nail_disease_finetuning.ipynb
 - Python 3.8+
 - PyTorch 2.0+
 - CUDA 11.8+ (for GPU support)
+- Hugging Face account with access to MedSigLIP
 - 16 GB RAM minimum
 - 50 GB storage for models and data
 
 **Installation:**
 ```bash
-pip install torch torchvision transformers datasets pillow scikit-learn matplotlib tqdm numpy pandas open-clip-torch
+pip install torch torchvision transformers datasets pillow scikit-learn matplotlib tqdm numpy pandas open-clip-torch huggingface-hub
 ```
 
 ---
@@ -118,6 +138,7 @@ pip install torch torchvision transformers datasets pillow scikit-learn matplotl
 
 | Section | Description |
 |---------|-------------|
+| **0** | 🆕 **Hugging Face Authentication** |
 | **1-2** | Setup & GPU Check |
 | **3** | Mount Google Drive (optional) |
 | **4-5** | Data Loading & DataLoaders |
@@ -258,6 +279,10 @@ The model is optimized for mobile:
 
 ## 🛠️ Troubleshooting
 
+### Issue: "Error loading model: gated repo"
+
+**Solution:** See [HUGGING_FACE_SETUP.md](HUGGING_FACE_SETUP.md) for complete authentication guide
+
 ### Issue: Out of Memory (OOM)
 
 **Solution:** Reduce batch size
@@ -296,6 +321,7 @@ df -h  # Check disk space
 - **MedSigLIP**: [Google Health AI](https://developers.google.com/health-ai/medsiglip)
 - **MedGemma**: [Google Cloud Documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/models/medgemma)
 - **Transformers Library**: [Hugging Face](https://huggingface.co/docs/transformers)
+- **Hugging Face Authentication**: [Security Tokens](https://huggingface.co/docs/hub/security-tokens)
 
 ---
 
@@ -353,6 +379,7 @@ If you use this project in your research, please cite:
 
 ---
 
-**Last Updated**: January 28, 2026  
-**Version**: 1.0.0  
-**Status**: Active Development ✅
+**Last Updated**: January 29, 2026  
+**Version**: 1.1.0  
+**Status**: Active Development ✅  
+**Latest Update**: Added Hugging Face authentication support
