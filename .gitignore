@@ -1,0 +1,64 @@
+# Data files
+*.csv
+*.xlsx
+*.xls
+
+# Model files
+medgemma_nails_finetuned/
+checkpoints/
+*.bin
+*.pt
+*.pth
+
+# Training outputs
+logs/
+runs/
+events.out.tfevents.*
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Results
+*.json
+*.log
+
+# Cache
+.cache/
+*.cache
