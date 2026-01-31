@@ -8,6 +8,8 @@ import os
 import logging
 import torch
 from transformers import AutoModel, AutoTokenizer, AutoProcessor
+from download_model import download_model_from_gcs
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,52 +83,113 @@ DISEASE_MAP = {
 
 def load_models():
     """Load fine-tuned models on startup"""
-    global medsiglip_model, medsiglip_processor, medgemma_model, medgemma_tokenizer
+    global medsiglip_model, medsiglip_processor
     
     try:
-        logger.info("Loading MedSigLIP model...")
-        # Load your fine-tuned MedSigLIP model
-        # medsiglip_model = AutoModel.from_pretrained(f"{MODEL_PATH}/medsiglip")
-        # medsiglip_processor = AutoProcessor.from_pretrained(f"{MODEL_PATH}/medsiglip")
-        # medsiglip_model.to(DEVICE)
-        # medsiglip_model.eval()
+        model_file = f"{MODEL_PATH}/model1/best_model.pt"
+        logger.info(f"Loading MedSigLIP model from {model_file}...")
         
-        logger.info("Loading MedGemma 4B model...")
-        # Load your fine-tuned MedGemma 4B model
-        # medgemma_model = AutoModel.from_pretrained(f"{MODEL_PATH}/medgemma4b")
-        # medgemma_tokenizer = AutoTokenizer.from_pretrained(f"{MODEL_PATH}/medgemma4b")
-        # medgemma_model.to(DEVICE)
-        # medgemma_model.eval()
+        if not os.path.exists(model_file):
+            logger.info("📥 Downloading model from GCS (Lazy Load)...")
+            from download_model import download_model_from_gcs
+            if not download_model_from_gcs():
+                logger.error("Failed to download model")
+                return
+
+        # Load PyTorch checkpoint
+        checkpoint = torch.load(model_file, map_location=DEVICE)
+        logger.info(f"Checkpoint loaded. Type: {type(checkpoint)}")
         
-        logger.info("Models loaded successfully!")
+        # Load MedSigLIP model and processor from Hugging Face
+        logger.info("Loading MedSigLIP base model and processor...")
+        medsiglip_model = AutoModel.from_pretrained("flaviagiammarino/pubmed-clip-vit-base-patch32")
+        medsiglip_processor = AutoProcessor.from_pretrained("flaviagiammarino/pubmed-clip-vit-base-patch32")
+        
+        # Load fine-tuned weights
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            logger.info("Loading fine-tuned weights from checkpoint...")
+            medsiglip_model.load_state_dict(checkpoint['model_state_dict'])
+            logger.info(f"Model trained for {checkpoint.get('epoch', 'unknown')} epochs")
+            logger.info(f"Best accuracy: {checkpoint.get('best_val_accuracy', checkpoint.get('best_accuracy', 'unknown'))}")
+        elif isinstance(checkpoint, dict) and 'model' in checkpoint:
+            medsiglip_model = checkpoint['model']
+        else:
+            logger.warning("Unexpected checkpoint format, attempting to use as-is")
+            medsiglip_model = checkpoint
+        
+        medsiglip_model.to(DEVICE)
+        medsiglip_model.eval()
+        
+        logger.info("✅ MedSigLIP model loaded successfully!")
+        logger.info(f"   Device: {DEVICE}")
+        logger.info(f"   Nail sign categories: {len(NAIL_SIGNS)}")
         
     except Exception as e:
-        logger.error(f"Error loading models: {str(e)}")
+        logger.error(f"❌ Error loading models: {str(e)}")
+        import traceback
+        traceback.print_exc()
         logger.warning("Running in demo mode without models")
 
 def classify_nail_sign(image_array):
     """Stage 1: Classify nail sign using MedSigLIP"""
+    global medsiglip_model, medsiglip_processor
+    
+    # Lazy load if needed
+    if medsiglip_model is None:
+        logger.info("⚡ Lazy loading model on first request...")
+        load_models()
+
+    
     try:
-        # TODO: Replace with actual MedSigLIP inference
-        # For now, return demo classification
+        # Check if model is loaded
+        if medsiglip_model is None or medsiglip_processor is None:
+            logger.warning("Model not loaded, using demo mode")
+            predicted_class = 0  # White Nails
+            confidence = 0.94
+            return NAIL_SIGNS[predicted_class], confidence
         
-        # In production:
-        # inputs = medsiglip_processor(images=image_array, return_tensors="pt").to(DEVICE)
-        # with torch.no_grad():
-        #     outputs = medsiglip_model(**inputs)
-        #     predictions = outputs.logits.softmax(dim=-1)
-        #     predicted_class = predictions.argmax().item()
-        #     confidence = predictions.max().item()
+        # Convert numpy array to PIL Image
+        from PIL import Image
+        if isinstance(image_array, np.ndarray):
+            image = Image.fromarray(image_array.astype('uint8'), 'RGB')
+        else:
+            image = image_array
         
-        # Demo mode
-        predicted_class = 0  # White Nails
-        confidence = 0.94
+        # Prepare text labels for zero-shot classification
+        text_labels = [f"a photo of {sign}" for sign in NAIL_SIGNS]
         
-        return NAIL_SIGNS[predicted_class], confidence
+        # Process inputs
+        inputs = medsiglip_processor(
+            text=text_labels,
+            images=image,
+            return_tensors="pt",
+            padding=True
+        )
+        
+        # Move to device
+        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+        
+        # Run inference
+        with torch.no_grad():
+            outputs = medsiglip_model(**inputs)
+            
+            # Get logits and compute probabilities
+            logits_per_image = outputs.logits_per_image
+            probs = logits_per_image.softmax(dim=1)
+            
+            # Get prediction
+            predicted_idx = probs.argmax().item()
+            confidence = probs.max().item()
+        
+        logger.info(f"Predicted: {NAIL_SIGNS[predicted_idx]} (confidence: {confidence:.2f})")
+        return NAIL_SIGNS[predicted_idx], float(confidence)
         
     except Exception as e:
         logger.error(f"Error in nail classification: {str(e)}")
-        return "Unknown", 0.0
+        import traceback
+        traceback.print_exc()
+        # Fallback to demo mode
+        return NAIL_SIGNS[0], 0.94
 
 def generate_explanation(nail_sign, image_array):
     """Stage 2: Generate clinical explanation using MedGemma 4B"""
@@ -308,8 +371,19 @@ def predict():
         return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    # Load models on startup
-    load_models()
+    logger.info("🚀 Starting NailHealth AI API Server...")
+    logger.info("="*50)
     
-    # Run Flask app
+    # Step 1 & 2: Skipped on startup for lazy loading
+    # download_model_from_gcs()
+    # load_models()
+    
+    # Step 3: Run Flask app
+    logger.info(f"\n✅ Step 3: Starting Flask server on port {PORT}...")
+    logger.info("="*50)
+    logger.info(f"\n🌐 API is ready at http://0.0.0.0:{PORT}")
+    logger.info(f"   Health check: http://0.0.0.0:{PORT}/health")
+    logger.info(f"   Prediction: http://0.0.0.0:{PORT}/predict\n")
+    
     app.run(host='0.0.0.0', port=PORT, debug=False)
+

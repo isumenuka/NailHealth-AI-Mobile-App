@@ -6,31 +6,33 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  curl \
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Copy requirements first (for better caching)  
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application files
+COPY download_model.py .
 COPY app.py .
 
 # Create models directory
-RUN mkdir -p /app/models
+RUN mkdir -p /app/models/model1
 
-# Copy your fine-tuned models (add these after training)
-# COPY models/medsiglip /app/models/medsiglip
-# COPY models/medgemma4b /app/models/medgemma4b
+# Set environment variables
+ENV PORT=8080
+ENV GCS_BUCKET=nailhealth-ai-models-nailhealth
+ENV PYTHONUNBUFFERED=1
 
 # Expose port
 EXPOSE 8080
 
-# Set environment variables
-ENV PORT=8080
-ENV MODEL_PATH=/app/models
-ENV PYTHONUNBUFFERED=1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
 
-# Run the application with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "2", "--timeout", "120", "app:app"]
+# Run the application
+CMD ["python", "app.py"]

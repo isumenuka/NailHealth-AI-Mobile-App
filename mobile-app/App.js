@@ -14,8 +14,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 
-// Replace with your Google Cloud Run API URL
-const API_URL = 'https://your-api-url.run.app/predict';
+// Cloud Run API URL - Updated with deployed endpoint
+const API_URL = 'https://nailhealth-api-ig7c2nupna-uc.a.run.app/predict';
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -86,12 +86,12 @@ export default function App() {
       // Convert image to base64
       const response = await fetch(imageUri);
       const blob = await response.blob();
-      
+
       const reader = new FileReader();
       reader.onloadend = async () => {
         try {
           const base64data = reader.result.split(',')[1];
-          
+
           // Send to API
           const apiResponse = await axios.post(
             API_URL,
@@ -100,10 +100,10 @@ export default function App() {
               headers: {
                 'Content-Type': 'application/json',
               },
-              timeout: 30000, // 30 second timeout
+              timeout: 120000, // 120 second timeout (first request downloads model)
             }
           );
-          
+
           setResult(apiResponse.data);
         } catch (error) {
           console.error('API Error:', error);
@@ -115,12 +115,12 @@ export default function App() {
           setLoading(false);
         }
       };
-      
+
       reader.onerror = () => {
         setLoading(false);
         Alert.alert('Error', 'Failed to process image.');
       };
-      
+
       reader.readAsDataURL(blob);
     } catch (error) {
       console.error('Error analyzing nail:', error);
@@ -137,8 +137,8 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FCFCF9" />
-      
-      <ScrollView 
+
+      <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -154,16 +154,16 @@ export default function App() {
         {/* Action Buttons */}
         {!image && (
           <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={styles.primaryButton} 
+            <TouchableOpacity
+              style={styles.primaryButton}
               onPress={takePhoto}
               activeOpacity={0.8}
             >
               <Text style={styles.primaryButtonText}>📸 Take Photo</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.secondaryButton} 
+            <TouchableOpacity
+              style={styles.secondaryButton}
               onPress={pickImage}
               activeOpacity={0.8}
             >
@@ -177,8 +177,8 @@ export default function App() {
           <View style={styles.imageContainer}>
             <Image source={{ uri: image }} style={styles.image} />
             {!loading && !result && (
-              <TouchableOpacity 
-                style={styles.retakeButton} 
+              <TouchableOpacity
+                style={styles.retakeButton}
                 onPress={resetApp}
               >
                 <Text style={styles.retakeButtonText}>🔄 Retake Photo</Text>
@@ -202,7 +202,7 @@ export default function App() {
         {result && !loading && (
           <View style={styles.resultsContainer}>
             <Text style={styles.resultsTitle}>🔍 Analysis Results</Text>
-            
+
             {/* Nail Sign Detection */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -210,11 +210,11 @@ export default function App() {
               </View>
               <Text style={styles.nailSign}>{result.nail_sign}</Text>
               <View style={styles.confidenceBar}>
-                <View 
+                <View
                   style={[
                     styles.confidenceFill,
                     { width: `${result.confidence * 100}%` }
-                  ]} 
+                  ]}
                 />
               </View>
               <Text style={styles.confidenceText}>
@@ -247,11 +247,11 @@ export default function App() {
                     </View>
                   </View>
                   <View style={styles.diseaseBar}>
-                    <View 
+                    <View
                       style={[
                         styles.diseaseBarFill,
                         { width: `${disease.confidence * 100}%` }
-                      ]} 
+                      ]}
                     />
                   </View>
                 </View>
@@ -277,15 +277,15 @@ export default function App() {
             <View style={styles.disclaimerCard}>
               <Text style={styles.disclaimerTitle}>⚠️ Important Notice</Text>
               <Text style={styles.disclaimerText}>
-                This app is for educational purposes only. It is NOT a substitute 
-                for professional medical advice, diagnosis, or treatment. Always 
+                This app is for educational purposes only. It is NOT a substitute
+                for professional medical advice, diagnosis, or treatment. Always
                 consult a qualified healthcare provider for proper medical evaluation.
               </Text>
             </View>
 
             {/* Action Buttons */}
-            <TouchableOpacity 
-              style={styles.newAnalysisButton} 
+            <TouchableOpacity
+              style={styles.newAnalysisButton}
               onPress={resetApp}
             >
               <Text style={styles.newAnalysisButtonText}>

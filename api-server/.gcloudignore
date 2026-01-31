@@ -1,0 +1,16 @@
+.git
+.gitignore
+.dockerignore
+
+README.md
+*.pt
+*.pth
+*.log
+__pycache__/
+models/
+venv/
+env/
+.vscode/
+.idea/
+deploy.ps1
+inspect_model.py
