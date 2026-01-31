@@ -1,0 +1,36 @@
+{
+  "name": "nailhealth-ai",
+  "version": "1.0.0",
+  "description": "AI-powered nail disease detection mobile app",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "~50.0.0",
+    "expo-status-bar": "~1.11.1",
+    "react": "18.2.0",
+    "react-native": "0.73.0",
+    "expo-camera": "~14.0.0",
+    "expo-image-picker": "~14.7.0",
+    "axios": "^1.6.0",
+    "expo-permissions": "~14.4.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0"
+  },
+  "private": true,
+  "keywords": [
+    "medical-ai",
+    "nail-disease",
+    "health-tech",
+    "react-native",
+    "expo",
+    "machine-learning"
+  ],
+  "author": "K.G.I Enuka",
+  "license": "Apache-2.0"
+}

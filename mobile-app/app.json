@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "NailHealth AI",
+    "slug": "nailhealth-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FCFCF9"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.isumenuka.nailhealthai",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app requires camera access to take photos of nails for disease detection.",
+        "NSPhotoLibraryUsageDescription": "This app requires photo library access to select nail photos for analysis."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FCFCF9"
+      },
+      "package": "com.isumenuka.nailhealthai",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiUrl": "https://your-api-url.run.app"
+    }
+  }
+}
