@@ -27,7 +27,8 @@ if ([string]::IsNullOrEmpty($PROJECT_ID)) {
     Write-Host "   Run: gcloud config set project YOUR_PROJECT_ID" -ForegroundColor Yellow
     $PROJECT_ID = Read-Host "Enter your GCP Project ID"
     gcloud config set project $PROJECT_ID
-} else {
+}
+else {
     Write-Host "📦 Using GCP Project: $PROJECT_ID" -ForegroundColor Green
 }
 
@@ -52,17 +53,11 @@ Write-Host ""
 # Deploy to Cloud Run
 # Note: --allow-unauthenticated is needed so the Cloud Run service itself is reachable,
 # but our application logic (app.py) handles the API Key validation.
-gcloud run deploy $SERVICE_NAME `
-    --source . `
-    --region $REGION `
-    --memory 4Gi `
-    --cpu 2 `
-    --timeout 300 `
-    --max-instances 10 `
-    --min-instances 0 `
-    --allow-unauthenticated `
-    --set-env-vars "API_KEY=$API_KEY" `
-    --platform managed
+# We use Gen2 environment for GCS Fuse (Model streaming)
+# Deploy to Cloud Run (Single line to avoid PowerShell parsing issues)
+Write-Host "🚀 Executing deployment command..." -ForegroundColor Cyan
+
+gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 4Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 0 --allow-unauthenticated --execution-environment gen2 --add-volume="name=models,type=cloud-storage,bucket=nailhealth-ai-models-nailhealth" --add-volume-mount="volume=models,mount-path=/models" --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" --platform managed
 
 Write-Host ""
 Write-Host "✅ Deployment Complete!" -ForegroundColor Green

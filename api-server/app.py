@@ -119,11 +119,9 @@ def load_models():
         logger.info(f"Loading MedSigLIP model from {model_file}...")
         
         if not os.path.exists(model_file):
-            logger.info("📥 Downloading model from GCS (Lazy Load)...")
-            from download_model import download_model_from_gcs
-            if not download_model_from_gcs():
-                logger.error("Failed to download model")
-                return
+            logger.error(f"❌ Model file not found at {model_file}")
+            logger.error("   Ensure GCS bucket is mounted at /models")
+            return
 
         # Load PyTorch checkpoint
         checkpoint = torch.load(model_file, map_location=DEVICE)
@@ -145,6 +143,12 @@ def load_models():
         else:
             logger.warning("Unexpected checkpoint format, attempting to use as-is")
             medsiglip_model = checkpoint
+        
+        # Aggressive memory cleanup
+        del checkpoint
+        import gc
+        gc.collect()
+        logger.info("🧹 Memory cleaned up after loading")
         
         medsiglip_model.to(DEVICE)
         medsiglip_model.eval()
