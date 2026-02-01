@@ -374,16 +374,23 @@ if __name__ == '__main__':
     logger.info("🚀 Starting NailHealth AI API Server...")
     logger.info("="*50)
     
-    # Step 1 & 2: Skipped on startup for lazy loading
-    # download_model_from_gcs()
-    # load_models()
+    # Step 1: Download model from Google Cloud Storage
+    logger.info("\n📥 Step 1: Downloading model from Google Cloud Storage...")
+    try:
+        download_model_from_gcs()
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
+        logger.warning("Will attempt lazy loading on first request")
+    
+    # Step 2: Load models on startup
+    logger.info("\n🤖 Step 2: Loading models...")
+    load_models()
     
     # Step 3: Run Flask app
     logger.info(f"\n✅ Step 3: Starting Flask server on port {PORT}...")
     logger.info("="*50)
-    logger.info(f"\n🌐 API is ready at http://0.0.0.0:{PORT}")
+    logger.info(f"\n🎉 API is ready at http://0.0.0.0:{PORT}")
     logger.info(f"   Health check: http://0.0.0.0:{PORT}/health")
     logger.info(f"   Prediction: http://0.0.0.0:{PORT}/predict\n")
     
     app.run(host='0.0.0.0', port=PORT, debug=False)
-

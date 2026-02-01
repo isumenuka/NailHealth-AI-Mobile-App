@@ -47,16 +47,39 @@ def download_model_from_gcs():
             if blob.name.endswith('/'):
                 continue
             
-            # Get relative path and create local file path
+            # Skip files in subdirectories (only download files directly in model1/)
             relative_path = blob.name[len(blob_prefix):]
+            if '/' in relative_path:
+                print(f"   Skipping subdirectory file: {blob.name}")
+                continue
+            
+            # Get relative path and create local file path
             local_file = model_dir / relative_path
             
             # Create parent directories if needed
             local_file.parent.mkdir(parents=True, exist_ok=True)
             
-            # Download the file
+            # Download the file with progress bar
             print(f"   Downloading: {blob.name} → {local_file.name}")
-            blob.download_to_filename(str(local_file))
+            print(f"   Size: {blob.size / (1024**3):.2f} GB")
+            
+            # Download with progress tracking
+            from tqdm import tqdm
+            
+            class DownloadProgressBar(tqdm):
+                def update_to(self, current, total):
+                    self.total = total
+                    self.update(current - self.n)
+            
+            with DownloadProgressBar(unit='B', unit_scale=True, miniters=1, desc='   Progress') as pbar:
+                def progress_callback(bytes_transferred):
+                    pbar.update_to(bytes_transferred, blob.size)
+                
+                # Download file
+                with open(str(local_file), 'wb') as f:
+                    blob.download_to_file(f)
+                    # Update progress to 100%
+                    pbar.update_to(blob.size, blob.size)
             
             file_size_mb = local_file.stat().st_size / (1024**2)
             print(f"   ✓ Downloaded: {file_size_mb:.1f} MB")
