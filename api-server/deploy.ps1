@@ -57,7 +57,8 @@ Write-Host ""
 # Deploy to Cloud Run (Single line to avoid PowerShell parsing issues)
 Write-Host "🚀 Executing deployment command..." -ForegroundColor Cyan
 
-gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 4Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 0 --allow-unauthenticated --execution-environment gen2 --add-volume="name=models,type=cloud-storage,bucket=nailhealth-ai-models-nailhealth" --add-volume-mount="volume=models,mount-path=/models" --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" --platform managed
+gcloud run services update $SERVICE_NAME --region $REGION --min-instances 1 --max-instances 5
+gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 4Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 1 --allow-unauthenticated --execution-environment gen2 --add-volume="name=models,type=cloud-storage,bucket=nailhealth-ai-models-nailhealth" --add-volume-mount="volume=models,mount-path=/models" --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" --platform managed
 
 Write-Host ""
 Write-Host "✅ Deployment Complete!" -ForegroundColor Green

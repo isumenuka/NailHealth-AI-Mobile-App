@@ -61,8 +61,8 @@ gcloud run deploy "$SERVICE_NAME" \
     --memory 4Gi \
     --cpu 2 \
     --timeout 300 \
-    --max-instances 10 \
-    --min-instances 0 \
+    --max-instances 5 \
+    --min-instances 1 \
     --allow-unauthenticated \
     --set-env-vars "API_KEY=$API_KEY" \
     --platform managed
