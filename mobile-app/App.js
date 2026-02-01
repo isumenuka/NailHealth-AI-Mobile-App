@@ -14,8 +14,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 
-// Cloud Run API URL - Updated with deployed endpoint
-const API_URL = 'https://nailhealth-api-ig7c2nupna-uc.a.run.app/predict';
+import { API_URL, API_KEY } from '@env';
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -92,13 +91,14 @@ export default function App() {
         try {
           const base64data = reader.result.split(',')[1];
 
-          // Send to API
+          // Send to API with authentication
           const apiResponse = await axios.post(
             API_URL,
             { image: base64data },
             {
               headers: {
                 'Content-Type': 'application/json',
+                'X-API-Key': API_KEY,
               },
               timeout: 120000, // 120 second timeout (first request downloads model)
             }
@@ -107,10 +107,19 @@ export default function App() {
           setResult(apiResponse.data);
         } catch (error) {
           console.error('API Error:', error);
-          Alert.alert(
-            'Analysis Failed',
-            'Unable to analyze the image. Please check your internet connection and try again.'
-          );
+
+          // Handle authentication errors
+          if (error.response && error.response.status === 401) {
+            Alert.alert(
+              'Authentication Failed',
+              'Invalid API key. Please contact support.'
+            );
+          } else {
+            Alert.alert(
+              'Analysis Failed',
+              'Unable to analyze the image. Please check your internet connection and try again.'
+            );
+          }
         } finally {
           setLoading(false);
         }

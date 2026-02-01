@@ -1,45 +1,90 @@
-# NailHealth AI - Cloud Run Deployment Commands
-# Run these commands in PowerShell from the api-server directory
+# 🚀 Deploy NailHealth API to Google Cloud Run with API Key
+# PowerShell script for Windows
+# Usage: .\deploy.ps1
 
-# STEP 1: Navigate to api-server directory
-Write-Host "📂 Step 1: Navigate to api-server directory" -ForegroundColor Green
-cd "c:\Users\Isum Enuka\Downloads\NailHealth-AI-Mobile-App\api-server"
+$ErrorActionPreference = "Stop"
 
-# STEP 2: Set your Google Cloud project
-Write-Host "`n🔧 Step 2: Setting Google Cloud project..." -ForegroundColor Green
-gcloud config set project nailhealth-ai
+Write-Host "🔐 NailHealth AI - Secure API Deployment" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
 
-# STEP 3: Build the container image
-Write-Host "`n📦 Step 3: Building container image (this takes 5-15 minutes)..." -ForegroundColor Green
-Write-Host "   Building and pushing to Google Container Registry..." -ForegroundColor Yellow
-gcloud builds submit --tag gcr.io/nailhealth-ai/api
+# Configuration
+$API_KEY = "zWWRlxZJPHauLozPAz9tqMiR174qt0OWk4yelnx8RyU"
+$REGION = "us-central1"
+$SERVICE_NAME = "nailhealth-api"
 
-# STEP 4: Deploy to Cloud Run
-Write-Host "`n🚀 Step 4: Deploying to Cloud Run..." -ForegroundColor Green
-gcloud run deploy nailhealth-api `
-  --image gcr.io/nailhealth-ai/api `
-  --platform managed `
-  --region us-central1 `
-  --allow-unauthenticated `
-  --memory 4Gi `
-  --cpu 2 `
-  --timeout 600 `
-  --max-instances 10 `
-  --set-env-vars GCS_BUCKET=nailhealth-ai-models-nailhealth
+# Check if gcloud is installed
+if (!(Get-Command gcloud -ErrorAction SilentlyContinue)) {
+    Write-Host "❌ Error: gcloud CLI is not installed" -ForegroundColor Red
+    Write-Host "   Install from: https://cloud.google.com/sdk/docs/install" -ForegroundColor Yellow
+    exit 1
+}
 
-# STEP 5: Get the deployment URL
-Write-Host "`n🌐 Step 5: Getting your API URL..." -ForegroundColor Green
-$API_URL = gcloud run services describe nailhealth-api `
-  --region us-central1 `
-  --format="value(status.url)"
+# Get current project ID
+$PROJECT_ID = (gcloud config get-value project 2>$null)
+if ([string]::IsNullOrEmpty($PROJECT_ID)) {
+    Write-Host "⚠️  No GCP project configured" -ForegroundColor Yellow
+    Write-Host "   Run: gcloud config set project YOUR_PROJECT_ID" -ForegroundColor Yellow
+    $PROJECT_ID = Read-Host "Enter your GCP Project ID"
+    gcloud config set project $PROJECT_ID
+} else {
+    Write-Host "📦 Using GCP Project: $PROJECT_ID" -ForegroundColor Green
+}
 
-Write-Host "`n✅ Deployment complete!" -ForegroundColor Green
-Write-Host "   Your API URL: $API_URL" -ForegroundColor Cyan
-Write-Host "   Health check: $API_URL/health" -ForegroundColor Cyan
-Write-Host "   Prediction: $API_URL/predict" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "📋 Deployment Configuration:" -ForegroundColor Cyan
+Write-Host "   Project: $PROJECT_ID"
+Write-Host "   Region: $REGION"
+Write-Host "   Service: $SERVICE_NAME"
+Write-Host "   API Key: $($API_KEY.Substring(0,20))..."
+Write-Host ""
 
-# STEP 6: Test the health endpoint
-Write-Host "`n🏥 Step 6: Testing health endpoint..." -ForegroundColor Green
-curl "$API_URL/health"
+$confirmation = Read-Host "Continue with deployment? (y/n)"
+if ($confirmation -ne 'y') {
+    Write-Host "❌ Deployment cancelled" -ForegroundColor Red
+    exit 0
+}
 
-Write-Host "`n🎉 All done! Your API is deployed and running!" -ForegroundColor Green
+Write-Host ""
+Write-Host "🏗️  Building and deploying to Cloud Run..." -ForegroundColor Cyan
+Write-Host ""
+
+# Deploy to Cloud Run
+# Note: --allow-unauthenticated is needed so the Cloud Run service itself is reachable,
+# but our application logic (app.py) handles the API Key validation.
+gcloud run deploy $SERVICE_NAME `
+    --source . `
+    --region $REGION `
+    --memory 4Gi `
+    --cpu 2 `
+    --timeout 300 `
+    --max-instances 10 `
+    --min-instances 0 `
+    --allow-unauthenticated `
+    --set-env-vars "API_KEY=$API_KEY" `
+    --platform managed
+
+Write-Host ""
+Write-Host "✅ Deployment Complete!" -ForegroundColor Green
+Write-Host ""
+
+# Get the service URL
+$SERVICE_URL = (gcloud run services describe $SERVICE_NAME --region $REGION --format="value(status.url)")
+
+Write-Host "🎉 Your API is live at:" -ForegroundColor Green
+Write-Host "   $SERVICE_URL" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "📋 Next Steps:" -ForegroundColor Yellow
+Write-Host "   1. Update mobile app API_URL to: $SERVICE_URL/predict"
+Write-Host "   2. Ensure mobile app has API_KEY: $($API_KEY.Substring(0,20))..."
+Write-Host "   3. Test the API:"
+Write-Host ""
+Write-Host "   Health Check (no auth):" -ForegroundColor Cyan
+Write-Host "   curl $SERVICE_URL/health"
+Write-Host ""
+Write-Host "   Prediction (with auth):" -ForegroundColor Cyan
+Write-Host "   curl -X POST $SERVICE_URL/predict \"
+Write-Host "     -H 'Content-Type: application/json' \"
+Write-Host "     -H 'X-API-Key: $API_KEY' \"
+Write-Host "     -d '{`"image`": `"base64data`"}'"
+Write-Host ""

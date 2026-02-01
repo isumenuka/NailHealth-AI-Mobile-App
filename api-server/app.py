@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from functools import wraps
 import base64
 import numpy as np
 from PIL import Image
@@ -21,6 +22,7 @@ CORS(app)  # Enable CORS for mobile app requests
 # Configuration
 MODEL_PATH = os.getenv('MODEL_PATH', './models')
 PORT = int(os.getenv('PORT', 8080))
+API_KEY = os.getenv('API_KEY', 'dev-key-change-in-production')  # API Key for authentication
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 logger.info(f"Using device: {DEVICE}")
@@ -80,6 +82,33 @@ DISEASE_MAP = {
         {"name": "Chronic Trauma", "confidence": 0.65}
     ]
 }
+
+# API Key Authentication Decorator
+def require_api_key(f):
+    """Decorator to require API key authentication for endpoints"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get API key from request headers
+        client_api_key = request.headers.get('X-API-Key')
+        
+        # Validate API key
+        if not client_api_key:
+            logger.warning("Request missing API key")
+            return jsonify({
+                'error': 'Unauthorized',
+                'message': 'API key is required. Please provide X-API-Key header.'
+            }), 401
+        
+        if client_api_key != API_KEY:
+            logger.warning(f"Invalid API key attempt: {client_api_key[:10]}...")
+            return jsonify({
+                'error': 'Unauthorized',
+                'message': 'Invalid API key provided.'
+            }), 401
+        
+        # API key is valid, proceed with request
+        return f(*args, **kwargs)
+    return decorated_function
 
 def load_models():
     """Load fine-tuned models on startup"""
@@ -323,7 +352,9 @@ def health_check():
         'models_loaded': medsiglip_model is not None and medgemma_model is not None
     }), 200
 
+
 @app.route('/predict', methods=['POST'])
+@require_api_key
 def predict():
     """Main prediction endpoint"""
     try:
@@ -374,17 +405,8 @@ if __name__ == '__main__':
     logger.info("🚀 Starting NailHealth AI API Server...")
     logger.info("="*50)
     
-    # Step 1: Download model from Google Cloud Storage
-    logger.info("\n📥 Step 1: Downloading model from Google Cloud Storage...")
-    try:
-        download_model_from_gcs()
-    except Exception as e:
-        logger.error(f"Failed to download model: {e}")
-        logger.warning("Will attempt lazy loading on first request")
-    
-    # Step 2: Load models on startup
-    logger.info("\n🤖 Step 2: Loading models...")
-    load_models()
+    # Note: Models are lazy loaded on first request to ensure fast startup for Cloud Run
+    logger.info("⚡ Models configured for lazy loading")
     
     # Step 3: Run Flask app
     logger.info(f"\n✅ Step 3: Starting Flask server on port {PORT}...")
