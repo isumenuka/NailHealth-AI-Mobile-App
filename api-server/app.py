@@ -9,7 +9,6 @@ import os
 import logging
 import torch
 from transformers import AutoModel, AutoTokenizer, AutoProcessor
-from download_model import download_model_from_gcs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

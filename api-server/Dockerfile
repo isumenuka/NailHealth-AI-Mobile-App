@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY download_model.py .
 COPY app.py .
+COPY models/ ./models/
 
 # Create models directory
 RUN mkdir -p /app/models/model1

@@ -3,11 +3,8 @@
 .dockerignore
 
 README.md
-*.pt
-*.pth
-*.log
-__pycache__/
-models/
+# models/
+# *.pt
 venv/
 env/
 .vscode/
