@@ -10,7 +10,7 @@ Write-Host ""
 
 # Configuration
 $API_KEY = "zWWRlxZJPHauLozPAz9tqMiR174qt0OWk4yelnx8RyU"
-$REGION = "us-central1"
+$REGION = "asia-southeast1"
 $SERVICE_NAME = "nailhealth-api"
 
 # Check if gcloud is installed
@@ -68,7 +68,7 @@ else {
 }
 
 # gcloud run services update $SERVICE_NAME --region $REGION --min-instances 1 --max-instances 5
-gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 8Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 1 --allow-unauthenticated --set-env-vars "API_KEY=$API_KEY" --platform managed
+gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 8Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 1 --allow-unauthenticated --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" --platform managed --execution-environment=gen2 --add-volume=name=models, type=cloud-storage, bucket=nailhealth-ai-models-nailhealth --add-volume-mount=volume=models, mount-path=/models
 
 Write-Host ""
 Write-Host "✅ Deployment Complete!" -ForegroundColor Green

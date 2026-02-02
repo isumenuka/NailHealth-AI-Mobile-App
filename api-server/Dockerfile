@@ -23,7 +23,7 @@ COPY download_hf.py .
 RUN python download_hf.py
 
 COPY app.py .
-COPY models/ ./models/
+# COPY models/ ./models/ (Removed: Using GCS Volume Mount)
 
 # Create models directory
 RUN mkdir -p /app/models/model1

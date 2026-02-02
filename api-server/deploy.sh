@@ -11,7 +11,7 @@ echo ""
 
 # Configuration
 PROJECT_ID="your-gcp-project-id"
-REGION="us-central1"
+REGION="asia-southeast1"
 SERVICE_NAME="nailhealth-api"
 API_KEY="zWWRlxZJPHauLozPAz9tqMiR174qt0OWk4yelnx8RyU"
 
@@ -58,14 +58,17 @@ echo ""
 gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --region "$REGION" \
-    --memory 4Gi \
+    --memory 8Gi \
     --cpu 2 \
     --timeout 300 \
     --max-instances 5 \
     --min-instances 1 \
     --allow-unauthenticated \
-    --set-env-vars "API_KEY=$API_KEY" \
-    --platform managed
+    --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" \
+    --platform managed \
+    --execution-environment=gen2 \
+    --add-volume=name=models,type=cloud-storage,bucket=nailhealth-ai-models-nailhealth \
+    --add-volume-mount=volume=models,mount-path=/models
 
 echo ""
 echo "✅ Deployment Complete!"
