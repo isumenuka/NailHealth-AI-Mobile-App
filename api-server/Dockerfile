@@ -17,6 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY download_model.py .
+COPY download_hf.py .
+
+# Pre-download Hugging Face models
+RUN python download_hf.py
+
 COPY app.py .
 COPY models/ ./models/
 

@@ -9,8 +9,8 @@ venv/
 ENV/
 
 # Models
-models/
-*.pt
+# models/
+# *.pt
 *.pth
 *.bin
 *.onnx

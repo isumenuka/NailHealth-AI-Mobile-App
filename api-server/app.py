@@ -113,7 +113,7 @@ def load_models():
     global medsiglip_model, medsiglip_processor
     
     try:
-        model_file = f"{MODEL_PATH}/model1/best_model.pt"
+        model_file = f"{MODEL_PATH}/model1/MedSigLIP-Fine-tuning.pt"
         logger.info(f"Loading MedSigLIP model from {model_file}...")
         
         if not os.path.exists(model_file):

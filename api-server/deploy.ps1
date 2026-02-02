@@ -57,6 +57,16 @@ Write-Host ""
 # Deploy to Cloud Run (Single line to avoid PowerShell parsing issues)
 Write-Host "🚀 Executing deployment command..." -ForegroundColor Cyan
 
+# Delete previous service if it exists (Cleanup)
+Write-Host "🗑️  Cleaning up previous deployment..." -ForegroundColor Cyan
+gcloud run services delete $SERVICE_NAME --region $REGION --quiet 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "   Previous service removed." -ForegroundColor Green
+}
+else {
+    Write-Host "   No previous service found or deletion failed (continuing...)" -ForegroundColor Yellow
+}
+
 # gcloud run services update $SERVICE_NAME --region $REGION --min-instances 1 --max-instances 5
 gcloud run deploy $SERVICE_NAME --source . --region $REGION --memory 8Gi --cpu 2 --timeout 300 --max-instances 5 --min-instances 1 --allow-unauthenticated --set-env-vars "API_KEY=$API_KEY" --platform managed
 
