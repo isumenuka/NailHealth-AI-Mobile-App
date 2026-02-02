@@ -67,7 +67,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --set-env-vars "API_KEY=$API_KEY,MODEL_PATH=/models" \
     --platform managed \
     --execution-environment=gen2 \
-    --add-volume=name=models,type=cloud-storage,bucket=nailhealth-ai-models-nailhealth \
+    --add-volume=name=models,type=cloud-storage,bucket="nailhealth-storage-$PROJECT_ID" \
     --add-volume-mount=volume=models,mount-path=/models
 
 echo ""
