@@ -7,7 +7,11 @@ from PIL import Image
 import io
 import os
 import logging
-from huggingface_hub import InferenceClient
+import json
+import torch
+import torch.nn as nn
+from transformers import AutoModel, AutoProcessor
+from huggingface_hub import snapshot_download
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -18,32 +22,108 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for mobile app requests
+CORS(app)
 
 # Configuration
 PORT = int(os.getenv('PORT', 8080))
-API_KEY = os.getenv('API_KEY', 'dev-key-change-in-production')  # API Key for authentication
+API_KEY = os.getenv('API_KEY', 'dev-key-change-in-production')
 HF_API_KEY = os.getenv('HF_API_KEY')
-HF_MODEL_ID = "ezsumm/medsiglip-nail-disease-classifier"
+HF_MODEL_ID = "isumenuka/medsiglip-nail-disease-classifier"
 
 if not HF_API_KEY:
-    logger.warning("⚠️ HF_API_KEY not found in environment variables. Model inference will fail.")
+    logger.warning("⚠️ HF_API_KEY not found. Model download might fail if repo is private.")
 
-# Initialize Hugging Face Inference Client
-hf_client = InferenceClient(token=HF_API_KEY)
+# --- Model Definition (Matched to inference.py) ---
+class MedSigLIPClassifierSingleDevice(nn.Module):
+    """Unified model for deployment"""
+    def __init__(self, medsiglip_model, classifier_head, num_classes):
+        super().__init__()
+        self.medsiglip = medsiglip_model
+        self.classifier = classifier_head
+        self.num_classes = num_classes
+        
+    def forward(self, pixel_values):
+        with torch.no_grad():
+            outputs = self.medsiglip.vision_model(pixel_values=pixel_values)
+            embeddings = outputs.pooler_output
+        logits = self.classifier(embeddings.float())
+        return logits
 
-# Nail sign categories
-NAIL_SIGNS = [
-    "White Nails (Terry's Nails)",
-    "Blue Nails",
-    "Clubbing",
-    "Spoon Nails (Koilonychia)",
-    "Black Lines (Melanoma Warning)",
-    "Psoriasis",
-    "Onychogryphosis"
-]
+# --- Global Model Variables ---
+model = None
+processor = None
+device = "cpu" # Force CPU for Cloud Run unless GPU is available
+class_names = []
 
-# Disease mappings for each nail sign
+def load_local_model():
+    global model, processor, class_names, device
+    try:
+        logger.info(f"⬇️ Downloading model snapshot from {HF_MODEL_ID}...")
+        model_path = snapshot_download(repo_id=HF_MODEL_ID, token=HF_API_KEY)
+        logger.info(f"✅ Model downloaded to {model_path}")
+
+        # Load config
+        with open(f"{model_path}/config.json", "r") as f:
+            config = json.load(f)
+        
+        class_names = config.get("class_names", [])
+        num_classes = config.get("num_classes", len(class_names))
+
+        logger.info("loading processor...")
+        processor = AutoProcessor.from_pretrained(model_path)
+        
+        logger.info("loading base model (google/medsiglip-448)...")
+        base_model = AutoModel.from_pretrained("google/medsiglip-448")
+        
+        # Recreate classifier structure (Exact copy from inference.py)
+        classifier = nn.Sequential(
+            nn.Linear(1152, 768),
+            nn.LayerNorm(768),
+            nn.GELU(),
+            nn.Dropout(0.4),
+            nn.Linear(768, 512),
+            nn.LayerNorm(512),
+            nn.GELU(),
+            nn.Dropout(0.4),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes)
+        )
+        
+        logger.info("Assembling full model...")
+        model = MedSigLIPClassifierSingleDevice(
+            medsiglip_model=base_model,
+            classifier_head=classifier,
+            num_classes=num_classes
+        )
+        
+        # Load weights
+        weights_path = f"{model_path}/pytorch_model.bin"
+        logger.info(f"Loading weights from {weights_path}...")
+        checkpoint = torch.load(weights_path, map_location=device)
+        
+        # Handle state dict key mismatch if necessary (usually strict=False helps inside load_state_dict if keys match)
+        # inference.py used: checkpoint["model_state_dict"]
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            model.load_state_dict(checkpoint)
+            
+        model.to(device)
+        model.eval()
+        logger.info("🎉 Model loaded successfully!")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to load model: {e}")
+        raise e
+
+# Load model at startup
+with app.app_context():
+    load_local_model()
+
+# --- Clinical Knowledge Base ---
 DISEASE_MAP = {
     "White Nails (Terry's Nails)": [
         {"name": "Liver Cirrhosis", "confidence": 0.94},
@@ -82,264 +162,99 @@ DISEASE_MAP = {
     ]
 }
 
-# API Key Authentication Decorator
-def require_api_key(f):
-    """Decorator to require API key authentication for endpoints"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # Get API key from request headers
-        client_api_key = request.headers.get('X-API-Key')
-        
-        # Validate API key
-        if not client_api_key:
-            logger.warning("Request missing API key")
-            return jsonify({
-                'error': 'Unauthorized',
-                'message': 'API key is required. Please provide X-API-Key header.'
-            }), 401
-        
-        if client_api_key != API_KEY:
-            logger.warning(f"Invalid API key attempt: {client_api_key[:10]}...")
-            return jsonify({
-                'error': 'Unauthorized',
-                'message': 'Invalid API key provided.'
-            }), 401
-        
-        # API key is valid, proceed with request
-        return f(*args, **kwargs)
-    return decorated_function
-
-def classify_nail_sign(image_bytes):
-    """Stage 1: Classify nail sign using MedSigLIP via Hugging Face Inference API"""
-    try:
-        # Use Zero-Shot Image Classification since MedSigLIP is a CLIP model
-        logger.info(f"Sending request to Hugging Face API for model: {HF_MODEL_ID}")
-        
-        # We need to construct labels for zero-shot classification
-        # Ideally, we should check if the model on HF supports zero-shot-image-classification task directly
-        # or if it's a fine-tuned image-classification model.
-        # Given it's a CLIP fine-tune ('medsiglip'), zero-shot is the standard usage.
-        
-        candidate_labels = [f"a photo of {sign}" for sign in NAIL_SIGNS]
-        
-        # The InferenceClient's zero_shot_image_classification expects an image (path, url, or PIL) and labels
-        # Convert bytes to PIL Image for the client
-        image = Image.open(io.BytesIO(image_bytes))
-        
-        results = hf_client.zero_shot_image_classification(
-            image=image,
-            model=HF_MODEL_ID,
-            labels=candidate_labels
-        )
-        
-        # results is a list of dicts: [{'label': '...', 'score': ...}, ...]
-        # They come sorted by score descending usually
-        top_result = results[0]
-        predicted_label = top_result['label']
-        confidence = top_result['score']
-        
-        # Strip "a photo of " prefix to get back the nail sign key
-        # verify if the model returns the full label we sent or just the class name if it was trained with specific classes
-        # For zero-shot, it returns the labels we passed.
-        predicted_sign = predicted_label.replace("a photo of ", "")
-        
-        # Fallback if stripping failed (e.g. model returned just the sign name for some reason)
-        if predicted_sign not in NAIL_SIGNS:
-             # Try to find partial match
-             for sign in NAIL_SIGNS:
-                 if sign in predicted_label:
-                     predicted_sign = sign
-                     break
-        
-        logger.info(f"Predicted: {predicted_sign} (confidence: {confidence:.2f})")
-        return predicted_sign, float(confidence)
-        
-    except Exception as e:
-        logger.error(f"Error in nail classification via HF API: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        # Fallback to demo mode or error
-        return NAIL_SIGNS[0], 0.94
-
 def generate_explanation(nail_sign, image_array):
-    """Stage 2: Generate clinical explanation (Static fallback for now)"""
-    try:
-        # Demo explanations
-        explanations = {
-            "White Nails (Terry's Nails)": (
-                "White nail appearance with preserved pink nail bed distally suggests chronic "
-                "liver disease. This finding, known as Terry's nails, is associated with hepatic "
-                "cirrhosis in approximately 80% of cases. The whitening occurs due to decreased "
-                "vascularity and increased connective tissue in the nail bed. This sign may also "
-                "indicate chronic kidney disease, diabetes, or congestive heart failure."
-            ),
-            "Blue Nails": (
-                "Cyanotic blue discoloration of the nails indicates inadequate oxygen saturation "
-                "in the blood (hypoxemia). This clinical sign suggests significant respiratory or "
-                "cardiovascular compromise. Common causes include chronic obstructive pulmonary disease "
-                "(COPD), heart failure, pulmonary embolism, or severe pneumonia. Immediate medical "
-                "evaluation is recommended to assess oxygen levels and underlying cardiopulmonary function."
-            ),
-            "Clubbing": (
-                "Digital clubbing is characterized by bulbous enlargement of the fingertip with increased "
-                "curvature of the nail. This finding indicates chronic hypoxia and is strongly associated "
-                "with lung cancer, interstitial lung disease, and cyanotic heart disease. Clubbing develops "
-                "over months to years and represents a significant diagnostic finding requiring thorough "
-                "pulmonary and cardiac evaluation."
-            ),
-            "Spoon Nails (Koilonychia)": (
-                "Concave depression of the nail plate (koilonychia or spoon nails) is a classic sign of "
-                "chronic iron deficiency anemia. The nail becomes thin and soft, eventually developing a "
-                "concave shape that can hold a drop of water. This finding typically appears after prolonged "
-                "iron deficiency and may also be seen in hemochromatosis, Raynaud's disease, or thyroid disorders."
-            ),
-            "Black Lines (Melanoma Warning)": (
-                "Longitudinal melanonychia (dark lines under the nail) requires urgent evaluation to rule out "
-                "subungual melanoma, particularly if the pigmentation is wide (>3mm), irregular, or involves "
-                "the cuticle (Hutchinson's sign). While trauma and benign conditions can cause similar findings, "
-                "any new or changing pigmented line warrants dermatological assessment and possible biopsy."
-            ),
-            "Psoriasis": (
-                "Nail psoriasis manifests as pitting, onycholysis (nail separation), oil drop discoloration, "
-                "and subungual hyperkeratosis. Approximately 50% of psoriasis patients develop nail changes, "
-                "and 80% of those with psoriatic arthritis show nail involvement. These findings indicate "
-                "systemic inflammatory disease and increased risk for psoriatic arthritis and metabolic syndrome."
-            ),
-            "Onychogryphosis": (
-                "Onychogryphosis presents as severe thickening and curvature of the nail, resembling a ram's horn. "
-                "This condition typically results from chronic trauma, poor circulation, neglect, or fungal infection. "
-                "It is commonly seen in elderly patients or those with peripheral vascular disease. Treatment involves "
-                "nail debridement and addressing underlying circulatory or podiatric issues."
-            )
-        }
-        
-        return explanations.get(nail_sign, "Clinical explanation not available.")
-        
-    except Exception as e:
-        logger.error(f"Error generating explanation: {str(e)}")
-        return "Unable to generate clinical explanation."
+    explanations = {
+        "White Nails (Terry's Nails)": "White nail appearance with preserved pink nail bed distally suggests chronic liver disease.",
+        "Blue Nails": "Cyanotic blue discoloration indicates inadequate oxygen saturation (hypoxemia).",
+        "Clubbing": "Digital clubbing is characterized by bulbous enlargement of the fingertip, often linked to lung/heart issues.",
+        "Spoon Nails (Koilonychia)": "Concave depression of the nail plate is a classic sign of iron deficiency anemia.",
+        "Black Lines (Melanoma Warning)": "Longitudinal melanonychia requires urgent evaluation to rule out subungual melanoma.",
+        "Psoriasis": "Nail psoriasis manifests as pitting and onycholysis, often indicating systemic inflammatory disease.",
+        "Onychogryphosis": "Severe thickening and curvature of the nail, typically from chronic trauma or poor circulation."
+    }
+    return explanations.get(nail_sign, "Clinical explanation not available.")
 
 def get_recommendations(nail_sign):
-    """Generate medical recommendations based on nail sign"""
     recommendations = {
-        "White Nails (Terry's Nails)": [
-            "Liver function tests (AST, ALT, bilirubin, albumin)",
-            "Renal function panel (creatinine, BUN, eGFR)",
-            "Fasting glucose and HbA1c",
-            "Hepatology consultation if liver disease suspected",
-            "Abdominal ultrasound to assess liver structure"
-        ],
-        "Blue Nails": [
-            "Pulse oximetry and arterial blood gas analysis",
-            "Chest X-ray and pulmonary function tests",
-            "Echocardiogram for cardiac evaluation",
-            "Emergency medical evaluation if acute onset",
-            "Pulmonology or cardiology referral"
-        ],
-        "Clubbing": [
-            "Chest CT scan to evaluate for lung pathology",
-            "Pulmonary function tests",
-            "Echocardiogram with bubble study",
-            "Complete blood count and inflammatory markers",
-            "Oncology referral if malignancy suspected"
-        ],
-        "Spoon Nails (Koilonychia)": [
-            "Complete blood count with iron studies",
-            "Serum ferritin, iron, and transferrin saturation",
-            "Evaluation for sources of blood loss",
-            "Thyroid function tests",
-            "Hematology referral if severe or refractory anemia"
-        ],
-        "Black Lines (Melanoma Warning)": [
-            "Urgent dermatology referral",
-            "Dermoscopy evaluation",
-            "Consider nail biopsy for definitive diagnosis",
-            "Document changes with serial photography",
-            "Rule out trauma or medication causes"
-        ],
-        "Psoriasis": [
-            "Dermatology consultation",
-            "Rheumatology evaluation for joint symptoms",
-            "Metabolic screening (lipids, glucose, blood pressure)",
-            "Consider topical or systemic psoriasis treatments",
-            "Cardiovascular risk assessment"
-        ],
-        "Onychogryphosis": [
-            "Podiatry referral for professional nail care",
-            "Vascular assessment (ABI, Doppler studies)",
-            "Fungal culture if infection suspected",
-            "Regular nail debridement",
-            "Address underlying circulatory issues"
-        ]
+        "White Nails (Terry's Nails)": ["Liver function tests", "Renal function panel", "Abdominal ultrasound"],
+        "Blue Nails": ["Pulse oximetry", "Chest X-ray", "Cardiology referral"],
+        "Clubbing": ["Chest CT scan", "Pulmonary function tests", "Echocardiogram"],
+        "Spoon Nails (Koilonychia)": ["Iron studies", "Complete blood count", "Thyroid tests"],
+        "Black Lines (Melanoma Warning)": ["Urgent dermatology referral", "Dermoscopy", "Biopsy"],
+        "Psoriasis": ["Dermatology consultation", "Rheumatology evaluation", "Metabolic screening"],
+        "Onychogryphosis": ["Podiatry referral", "Vascular assessment", "Regular debridement"]
     }
-    
-    return recommendations.get(nail_sign, ["Consult healthcare provider for evaluation"])
+    return recommendations.get(nail_sign, ["Consult healthcare provider."])
+
+# --- Endpoints ---
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        'status': 'online',
+        'message': 'NailHealth AI API is running (Local Inference Mode)',
+        'model': HF_MODEL_ID,
+        'endpoints': {'health': '/health', 'predict': '/predict'}
+    }), 200
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
-        'status': 'healthy',
-        'backend': 'Hugging Face Inference API',
+        'status': 'healthy' if model else 'loading',
+        'backend': 'Local Inference (Container)',
         'model': HF_MODEL_ID
     }), 200
 
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        client_key = request.headers.get('X-API-Key')
+        if not client_key or client_key != API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route('/predict', methods=['POST'])
 @require_api_key
 def predict():
-    """Main prediction endpoint"""
     try:
-        # Validate request
         if not request.json or 'image' not in request.json:
             return jsonify({'error': 'No image provided'}), 400
         
-        # Decode base64 image
-        try:
-            image_data = base64.b64decode(request.json['image'])
-            # Don't convert to numpy/PIL here unless needed for display/logging
-            # InferenceClient handles inputs. But for classify_nail_sign we convert to PIL
-        except Exception as e:
-            logger.error(f"Error decoding image: {str(e)}")
-            return jsonify({'error': 'Invalid image format'}), 400
+        # Decode image
+        image_bytes = base64.b64decode(request.json['image'])
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        # Stage 1: Classify nail sign with MedSigLIP via HF API
-        nail_sign, confidence = classify_nail_sign(image_data)
+        # Preprocess
+        inputs = processor(images=image, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(device)
         
-        # Stage 2: Generate explanation (Static)
-        explanation = generate_explanation(nail_sign, None)
+        # Inference
+        with torch.no_grad():
+            logits = model(pixel_values)
+            probs = torch.softmax(logits, dim=-1)
+            pred_idx = probs.argmax(dim=-1).item()
+            confidence = probs[0, pred_idx].item()
+            
+        predicted_sign = class_names[pred_idx]
         
-        # Get disease predictions
-        diseases = DISEASE_MAP.get(nail_sign, [])
+        logger.info(f"Prediction: {predicted_sign} ({confidence:.2f})")
         
-        # Get recommendations
-        recommendations = get_recommendations(nail_sign)
-        
-        # Prepare response
+        # Response Construction
         response = {
-            'nail_sign': nail_sign,
+            'nail_sign': predicted_sign,
             'confidence': float(confidence),
-            'explanation': explanation,
-            'diseases': diseases,
-            'recommendations': recommendations,
+            'explanation': generate_explanation(predicted_sign, None),
+            'diseases': DISEASE_MAP.get(predicted_sign, []),
+            'recommendations': get_recommendations(predicted_sign),
             'timestamp': None
         }
         
         return jsonify(response), 200
-        
+
     except Exception as e:
-        logger.error(f"Error in prediction: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.error(f"Prediction error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info("🚀 Starting NailHealth AI API Server (HF Inference Mode)...")
-    logger.info("="*50)
-    
-    logger.info(f"\n✅ Starting Flask server on port {PORT}...")
-    logger.info(f"   Model: {HF_MODEL_ID}")
-    logger.info("="*50)
-    logger.info(f"\n🎉 API is ready at http://0.0.0.0:{PORT}")
-    logger.info(f"   Health check: http://0.0.0.0:{PORT}/health")
-    logger.info(f"   Prediction: http://0.0.0.0:{PORT}/predict\n")
-    
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT)

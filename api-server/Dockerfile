@@ -7,6 +7,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
   curl \
+  libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for better caching)  
@@ -25,9 +26,9 @@ ENV PYTHONUNBUFFERED=1
 # Expose port
 EXPOSE 8080
 
-# Health check
+# Health check (Using gunicorn, so check localhost:PORT/health)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with Gunicorn
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
