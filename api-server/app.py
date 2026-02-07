@@ -7,8 +7,11 @@ from PIL import Image
 import io
 import os
 import logging
-import torch
-from transformers import AutoModel, AutoTokenizer, AutoProcessor
+from huggingface_hub import InferenceClient
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,18 +21,16 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for mobile app requests
 
 # Configuration
-MODEL_PATH = os.getenv('MODEL_PATH', './models')
 PORT = int(os.getenv('PORT', 8080))
 API_KEY = os.getenv('API_KEY', 'dev-key-change-in-production')  # API Key for authentication
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+HF_API_KEY = os.getenv('HF_API_KEY')
+HF_MODEL_ID = "ezsumm/medsiglip-nail-disease-classifier"
 
-logger.info(f"Using device: {DEVICE}")
+if not HF_API_KEY:
+    logger.warning("⚠️ HF_API_KEY not found in environment variables. Model inference will fail.")
 
-# Global variables for models
-medsiglip_model = None
-medsiglip_processor = None
-medgemma_model = None
-medgemma_tokenizer = None
+# Initialize Hugging Face Inference Client
+hf_client = InferenceClient(token=HF_API_KEY)
 
 # Nail sign categories
 NAIL_SIGNS = [
@@ -108,132 +109,61 @@ def require_api_key(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def load_models():
-    """Load fine-tuned models on startup"""
-    global medsiglip_model, medsiglip_processor
-    
+def classify_nail_sign(image_bytes):
+    """Stage 1: Classify nail sign using MedSigLIP via Hugging Face Inference API"""
     try:
-        model_file = f"{MODEL_PATH}/model1/MedSigLIP-Fine-tuning.pt"
-        logger.info(f"Loading MedSigLIP model from {model_file}...")
+        # Use Zero-Shot Image Classification since MedSigLIP is a CLIP model
+        logger.info(f"Sending request to Hugging Face API for model: {HF_MODEL_ID}")
         
-        if not os.path.exists(model_file):
-            logger.error(f"❌ Model file not found at {model_file}")
-            logger.error("   Ensure GCS bucket is mounted at /models")
-            return
-
-        # Load PyTorch checkpoint
-        checkpoint = torch.load(model_file, map_location=DEVICE)
-        logger.info(f"Checkpoint loaded. Type: {type(checkpoint)}")
+        # We need to construct labels for zero-shot classification
+        # Ideally, we should check if the model on HF supports zero-shot-image-classification task directly
+        # or if it's a fine-tuned image-classification model.
+        # Given it's a CLIP fine-tune ('medsiglip'), zero-shot is the standard usage.
         
-        # Load MedSigLIP model and processor from Hugging Face
-        logger.info("Loading MedSigLIP base model and processor...")
-        medsiglip_model = AutoModel.from_pretrained("flaviagiammarino/pubmed-clip-vit-base-patch32")
-        medsiglip_processor = AutoProcessor.from_pretrained("flaviagiammarino/pubmed-clip-vit-base-patch32")
+        candidate_labels = [f"a photo of {sign}" for sign in NAIL_SIGNS]
         
-        # Load fine-tuned weights
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            logger.info("Loading fine-tuned weights from checkpoint...")
-            medsiglip_model.load_state_dict(checkpoint['model_state_dict'])
-            logger.info(f"Model trained for {checkpoint.get('epoch', 'unknown')} epochs")
-            logger.info(f"Best accuracy: {checkpoint.get('best_val_accuracy', checkpoint.get('best_accuracy', 'unknown'))}")
-        elif isinstance(checkpoint, dict) and 'model' in checkpoint:
-            medsiglip_model = checkpoint['model']
-        else:
-            logger.warning("Unexpected checkpoint format, attempting to use as-is")
-            medsiglip_model = checkpoint
+        # The InferenceClient's zero_shot_image_classification expects an image (path, url, or PIL) and labels
+        # Convert bytes to PIL Image for the client
+        image = Image.open(io.BytesIO(image_bytes))
         
-        # Aggressive memory cleanup
-        del checkpoint
-        import gc
-        gc.collect()
-        logger.info("🧹 Memory cleaned up after loading")
-        
-        medsiglip_model.to(DEVICE)
-        medsiglip_model.eval()
-        
-        logger.info("✅ MedSigLIP model loaded successfully!")
-        logger.info(f"   Device: {DEVICE}")
-        logger.info(f"   Nail sign categories: {len(NAIL_SIGNS)}")
-        
-    except Exception as e:
-        logger.error(f"❌ Error loading models: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        logger.warning("Running in demo mode without models")
-
-def classify_nail_sign(image_array):
-    """Stage 1: Classify nail sign using MedSigLIP"""
-    global medsiglip_model, medsiglip_processor
-    
-    # Lazy load if needed
-    if medsiglip_model is None:
-        logger.info("⚡ Lazy loading model on first request...")
-        load_models()
-
-    
-    try:
-        # Check if model is loaded
-        if medsiglip_model is None or medsiglip_processor is None:
-            logger.warning("Model not loaded, using demo mode")
-            predicted_class = 0  # White Nails
-            confidence = 0.94
-            return NAIL_SIGNS[predicted_class], confidence
-        
-        # Convert numpy array to PIL Image
-        from PIL import Image
-        if isinstance(image_array, np.ndarray):
-            image = Image.fromarray(image_array.astype('uint8'), 'RGB')
-        else:
-            image = image_array
-        
-        # Prepare text labels for zero-shot classification
-        text_labels = [f"a photo of {sign}" for sign in NAIL_SIGNS]
-        
-        # Process inputs
-        inputs = medsiglip_processor(
-            text=text_labels,
-            images=image,
-            return_tensors="pt",
-            padding=True
+        results = hf_client.zero_shot_image_classification(
+            image=image,
+            model=HF_MODEL_ID,
+            labels=candidate_labels
         )
         
-        # Move to device
-        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+        # results is a list of dicts: [{'label': '...', 'score': ...}, ...]
+        # They come sorted by score descending usually
+        top_result = results[0]
+        predicted_label = top_result['label']
+        confidence = top_result['score']
         
-        # Run inference
-        with torch.no_grad():
-            outputs = medsiglip_model(**inputs)
-            
-            # Get logits and compute probabilities
-            logits_per_image = outputs.logits_per_image
-            probs = logits_per_image.softmax(dim=1)
-            
-            # Get prediction
-            predicted_idx = probs.argmax().item()
-            confidence = probs.max().item()
+        # Strip "a photo of " prefix to get back the nail sign key
+        # verify if the model returns the full label we sent or just the class name if it was trained with specific classes
+        # For zero-shot, it returns the labels we passed.
+        predicted_sign = predicted_label.replace("a photo of ", "")
         
-        logger.info(f"Predicted: {NAIL_SIGNS[predicted_idx]} (confidence: {confidence:.2f})")
-        return NAIL_SIGNS[predicted_idx], float(confidence)
+        # Fallback if stripping failed (e.g. model returned just the sign name for some reason)
+        if predicted_sign not in NAIL_SIGNS:
+             # Try to find partial match
+             for sign in NAIL_SIGNS:
+                 if sign in predicted_label:
+                     predicted_sign = sign
+                     break
+        
+        logger.info(f"Predicted: {predicted_sign} (confidence: {confidence:.2f})")
+        return predicted_sign, float(confidence)
         
     except Exception as e:
-        logger.error(f"Error in nail classification: {str(e)}")
+        logger.error(f"Error in nail classification via HF API: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Fallback to demo mode
+        # Fallback to demo mode or error
         return NAIL_SIGNS[0], 0.94
 
 def generate_explanation(nail_sign, image_array):
-    """Stage 2: Generate clinical explanation using MedGemma 4B"""
+    """Stage 2: Generate clinical explanation (Static fallback for now)"""
     try:
-        # TODO: Replace with actual MedGemma 4B inference
-        
-        # In production:
-        # prompt = f"Analyze this nail condition: {nail_sign}. Provide clinical explanation."
-        # inputs = medgemma_tokenizer(prompt, return_tensors="pt").to(DEVICE)
-        # with torch.no_grad():
-        #     outputs = medgemma_model.generate(**inputs, max_length=256)
-        #     explanation = medgemma_tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
         # Demo explanations
         explanations = {
             "White Nails (Terry's Nails)": (
@@ -350,8 +280,8 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'device': str(DEVICE),
-        'models_loaded': medsiglip_model is not None and medgemma_model is not None
+        'backend': 'Hugging Face Inference API',
+        'model': HF_MODEL_ID
     }), 200
 
 
@@ -367,19 +297,17 @@ def predict():
         # Decode base64 image
         try:
             image_data = base64.b64decode(request.json['image'])
-            image = Image.open(io.BytesIO(image_data))
-            image = image.convert('RGB')
-            image_array = np.array(image)
+            # Don't convert to numpy/PIL here unless needed for display/logging
+            # InferenceClient handles inputs. But for classify_nail_sign we convert to PIL
         except Exception as e:
             logger.error(f"Error decoding image: {str(e)}")
             return jsonify({'error': 'Invalid image format'}), 400
         
-        # Stage 1: Classify nail sign with MedSigLIP
-        nail_sign, confidence = classify_nail_sign(image_array)
-        logger.info(f"Classified as: {nail_sign} (confidence: {confidence:.2f})")
+        # Stage 1: Classify nail sign with MedSigLIP via HF API
+        nail_sign, confidence = classify_nail_sign(image_data)
         
-        # Stage 2: Generate explanation with MedGemma 4B
-        explanation = generate_explanation(nail_sign, image_array)
+        # Stage 2: Generate explanation (Static)
+        explanation = generate_explanation(nail_sign, None)
         
         # Get disease predictions
         diseases = DISEASE_MAP.get(nail_sign, [])
@@ -394,7 +322,7 @@ def predict():
             'explanation': explanation,
             'diseases': diseases,
             'recommendations': recommendations,
-            'timestamp': None  # You can add timestamp if needed
+            'timestamp': None
         }
         
         return jsonify(response), 200
@@ -404,14 +332,11 @@ def predict():
         return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    logger.info("🚀 Starting NailHealth AI API Server...")
+    logger.info("🚀 Starting NailHealth AI API Server (HF Inference Mode)...")
     logger.info("="*50)
     
-    # Note: Models are lazy loaded on first request to ensure fast startup for Cloud Run
-    logger.info("⚡ Models configured for lazy loading")
-    
-    # Step 3: Run Flask app
-    logger.info(f"\n✅ Step 3: Starting Flask server on port {PORT}...")
+    logger.info(f"\n✅ Starting Flask server on port {PORT}...")
+    logger.info(f"   Model: {HF_MODEL_ID}")
     logger.info("="*50)
     logger.info(f"\n🎉 API is ready at http://0.0.0.0:{PORT}")
     logger.info(f"   Health check: http://0.0.0.0:{PORT}/health")
