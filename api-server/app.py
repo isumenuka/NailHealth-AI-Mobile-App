@@ -2,16 +2,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from functools import wraps
 import base64
-import numpy as np
-from PIL import Image
-import io
 import os
 import logging
-import json
-import torch
-import torch.nn as nn
-from transformers import AutoModel, AutoProcessor
-from huggingface_hub import snapshot_download
+import requests
+import io
+from PIL import Image
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -28,100 +23,12 @@ CORS(app)
 PORT = int(os.getenv('PORT', 8080))
 API_KEY = os.getenv('API_KEY', 'dev-key-change-in-production')
 HF_API_KEY = os.getenv('HF_API_KEY')
-HF_MODEL_ID = "isumenuka/medsiglip-nail-disease-classifier"
+HF_ENDPOINT_URL = os.getenv('HF_ENDPOINT_URL')
 
 if not HF_API_KEY:
-    logger.warning("⚠️ HF_API_KEY not found. Model download might fail if repo is private.")
-
-# --- Model Definition (Matched to inference.py) ---
-class MedSigLIPClassifierSingleDevice(nn.Module):
-    """Unified model for deployment"""
-    def __init__(self, medsiglip_model, classifier_head, num_classes):
-        super().__init__()
-        self.medsiglip = medsiglip_model
-        self.classifier = classifier_head
-        self.num_classes = num_classes
-        
-    def forward(self, pixel_values):
-        with torch.no_grad():
-            outputs = self.medsiglip.vision_model(pixel_values=pixel_values)
-            embeddings = outputs.pooler_output
-        logits = self.classifier(embeddings.float())
-        return logits
-
-# --- Global Model Variables ---
-model = None
-processor = None
-device = "cpu" # Force CPU for Cloud Run unless GPU is available
-class_names = []
-
-def load_local_model():
-    global model, processor, class_names, device
-    try:
-        logger.info(f"⬇️ Downloading model snapshot from {HF_MODEL_ID}...")
-        model_path = snapshot_download(repo_id=HF_MODEL_ID, token=HF_API_KEY)
-        logger.info(f"✅ Model downloaded to {model_path}")
-
-        # Load config
-        with open(f"{model_path}/config.json", "r") as f:
-            config = json.load(f)
-        
-        class_names = config.get("class_names", [])
-        num_classes = config.get("num_classes", len(class_names))
-
-        logger.info("loading processor...")
-        processor = AutoProcessor.from_pretrained(model_path)
-        
-        logger.info("loading base model (google/medsiglip-448)...")
-        base_model = AutoModel.from_pretrained("google/medsiglip-448")
-        
-        # Recreate classifier structure (Exact copy from inference.py)
-        classifier = nn.Sequential(
-            nn.Linear(1152, 768),
-            nn.LayerNorm(768),
-            nn.GELU(),
-            nn.Dropout(0.4),
-            nn.Linear(768, 512),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            nn.Dropout(0.4),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-        
-        logger.info("Assembling full model...")
-        model = MedSigLIPClassifierSingleDevice(
-            medsiglip_model=base_model,
-            classifier_head=classifier,
-            num_classes=num_classes
-        )
-        
-        # Load weights
-        weights_path = f"{model_path}/pytorch_model.bin"
-        logger.info(f"Loading weights from {weights_path}...")
-        checkpoint = torch.load(weights_path, map_location=device)
-        
-        # Handle state dict key mismatch if necessary (usually strict=False helps inside load_state_dict if keys match)
-        # inference.py used: checkpoint["model_state_dict"]
-        if "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            model.load_state_dict(checkpoint)
-            
-        model.to(device)
-        model.eval()
-        logger.info("🎉 Model loaded successfully!")
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to load model: {e}")
-        raise e
-
-# Load model at startup
-with app.app_context():
-    load_local_model()
+    logger.warning("⚠️ HF_API_KEY not found. Model access might fail.")
+if not HF_ENDPOINT_URL:
+    logger.warning("⚠️ HF_ENDPOINT_URL not found. Predictions will fail.")
 
 # --- Clinical Knowledge Base ---
 DISEASE_MAP = {
@@ -162,7 +69,7 @@ DISEASE_MAP = {
     ]
 }
 
-def generate_explanation(nail_sign, image_array):
+def generate_explanation(nail_sign):
     explanations = {
         "White Nails (Terry's Nails)": "White nail appearance with preserved pink nail bed distally suggests chronic liver disease.",
         "Blue Nails": "Cyanotic blue discoloration indicates inadequate oxygen saturation (hypoxemia).",
@@ -192,17 +99,16 @@ def get_recommendations(nail_sign):
 def index():
     return jsonify({
         'status': 'online',
-        'message': 'NailHealth AI API is running (Local Inference Mode)',
-        'model': HF_MODEL_ID,
+        'message': 'NailHealth AI API is running (HF Inference Endpoint Mode)',
         'endpoints': {'health': '/health', 'predict': '/predict'}
     }), 200
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
-        'status': 'healthy' if model else 'loading',
-        'backend': 'Local Inference (Container)',
-        'model': HF_MODEL_ID
+        'status': 'healthy',
+        'backend': 'Hugging Face Inference Endpoint',
+        'endpoint_configured': bool(HF_ENDPOINT_URL)
     }), 200
 
 def require_api_key(f):
@@ -214,6 +120,29 @@ def require_api_key(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def query_hf_endpoint(image_bytes):
+    """
+    Sends image bytes to the Hugging Face Inference Endpoint.
+    Expects the endpoint to return a list of dicts: [{'label': 'Label', 'score': 0.99}, ...]
+    """
+    if not HF_ENDPOINT_URL:
+        raise ValueError("HF_ENDPOINT_URL is not set.")
+
+    headers = {
+        "Authorization": f"Bearer {HF_API_KEY}",
+        "Content-Type": "application/octet-stream"
+    }
+
+    try:
+        response = requests.post(HF_ENDPOINT_URL, headers=headers, data=image_bytes)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"HF Endpoint Request Failed: {e}")
+        if e.response is not None:
+             logger.error(f"HF Endpoint Response: {e.response.text}")
+        raise e
+
 @app.route('/predict', methods=['POST'])
 @require_api_key
 def predict():
@@ -221,30 +150,44 @@ def predict():
         if not request.json or 'image' not in request.json:
             return jsonify({'error': 'No image provided'}), 400
         
-        # Decode image
-        image_bytes = base64.b64decode(request.json['image'])
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        # Decode base64 image from client
+        image_data = base64.b64decode(request.json['image'])
         
-        # Preprocess
-        inputs = processor(images=image, return_tensors="pt")
-        pixel_values = inputs["pixel_values"].to(device)
+        # Verify it's a valid image (optional consistency check)
+        try:
+            Image.open(io.BytesIO(image_data)).verify()
+        except Exception:
+            return jsonify({'error': 'Invalid image data'}), 400
+
+        # Query Hugging Face Endpoint
+        # We send the raw bytes directly
+        hf_response = query_hf_endpoint(image_data)
         
-        # Inference
-        with torch.no_grad():
-            logits = model(pixel_values)
-            probs = torch.softmax(logits, dim=-1)
-            pred_idx = probs.argmax(dim=-1).item()
-            confidence = probs[0, pred_idx].item()
+        # Log response for debugging
+        logger.info(f"HF Response: {hf_response}")
+
+        # Parse Response
+        # Expected format: [{'label': 'Class Name', 'score': 0.95}, ...]
+        # We assume the endpoint returns sorted results or we sort them
+        if isinstance(hf_response, list) and len(hf_response) > 0:
+            # Sort by score just in case
+            sorted_predictions = sorted(hf_response, key=lambda x: x['score'], reverse=True)
+            top_prediction = sorted_predictions[0]
             
-        predicted_sign = class_names[pred_idx]
-        
+            predicted_sign = top_prediction['label']
+            confidence = top_prediction['score']
+        elif isinstance(hf_response, dict) and 'error' in hf_response:
+             raise Exception(f"HF Endpoint Error: {hf_response['error']}")
+        else:
+            raise Exception(f"Unexpected response format from HF Endpoint: {hf_response}")
+
         logger.info(f"Prediction: {predicted_sign} ({confidence:.2f})")
         
-        # Response Construction
+        # Response Construction (Matching original API format)
         response = {
             'nail_sign': predicted_sign,
             'confidence': float(confidence),
-            'explanation': generate_explanation(predicted_sign, None),
+            'explanation': generate_explanation(predicted_sign),
             'diseases': DISEASE_MAP.get(predicted_sign, []),
             'recommendations': get_recommendations(predicted_sign),
             'timestamp': None

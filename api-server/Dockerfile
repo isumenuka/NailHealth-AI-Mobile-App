@@ -4,13 +4,12 @@ FROM python:3.10-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (curl for healthcheck)
 RUN apt-get update && apt-get install -y \
   curl \
-  libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first (for better caching)  
+# Copy requirements first
 COPY requirements.txt .
 
 # Install Python dependencies
@@ -26,7 +25,7 @@ ENV PYTHONUNBUFFERED=1
 # Expose port
 EXPOSE 8080
 
-# Health check (Using gunicorn, so check localhost:PORT/health)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
 
