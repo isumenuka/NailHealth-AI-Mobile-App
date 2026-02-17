@@ -38,7 +38,7 @@ Detects 7 nail conditions indicating systemic diseases:
 ```
 📱 User Photo
     ↓
-☁️ Google Cloud Run API
+☁️ Hugging Face Inference API
     ↓
 🤖 Model 1: MedSigLIP (Fine-tuned)
    → Classifies nail sign type
@@ -57,9 +57,9 @@ Detects 7 nail conditions indicating systemic diseases:
 |-----------|-----------|
 | **Mobile App** | React Native + Expo |
 | **Backend API** | Flask (Python) |
-| **Cloud Hosting** | Google Cloud Run |
+| **Cloud Hosting** | Hugging Face Inference Endpoints |
 | **ML Models** | MedSigLIP + MedGemma 4B |
-| **Storage** | Google Cloud Storage |
+| **Storage** | Hugging Face Hub |
 | **Training** | Kaggle GPU (Tesla T4) |
 
 ---
@@ -100,7 +100,7 @@ NailHealth-AI-Mobile-App/
 
 - Node.js 18+ and npm
 - Python 3.10+
-- Google Cloud account (free tier)
+- Hugging Face account
 - Expo account (free)
 - Smartphone (iOS/Android)
 
@@ -131,19 +131,14 @@ python app.py
 
 API runs at `http://localhost:8080`
 
-### 4. Deploy to Google Cloud
+### 4. Deploy to Hugging Face
 
-See [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md) for detailed steps.
+See [HUGGING_FACE_SETUP.md](./docs/HUGGING_FACE_SETUP.md) for detailed steps.
 
-```bash
-# Build and deploy
-gcloud builds submit --tag gcr.io/YOUR-PROJECT-ID/nailhealth-api
-gcloud run deploy nailhealth-api \
-  --image gcr.io/YOUR-PROJECT-ID/nailhealth-api \
-  --platform managed \
-  --region us-central1 \
-  --memory 4Gi
-```
+1. Create a model repository on Hugging Face
+2. Upload your model files
+3. Create an Inference Endpoint
+4. Use the provided URL in your app
 
 ---
 
@@ -239,24 +234,16 @@ Both trained on Kaggle with Tesla T4 GPU (free tier).
 
 ## 🌐 Deployment Options
 
-### Option 1: Google Cloud Run (Recommended)
-- ✅ Auto-scaling
-- ✅ Pay-per-use
-- ✅ Free tier (2M requests/month)
-- ✅ HTTPS out-of-the-box
-- ⚙️ Memory: 4GB, CPU: 2 vCPU
+### Recommended: Hugging Face Inference Endpoints
+We recommend using **Hugging Face Inference Endpoints** for the easiest setup without managing complex cloud infrastructure.
 
-### Option 2: AWS Lambda + API Gateway
-- ✅ Serverless
-- ✅ Low cost
-- ❌ Cold start delay
+- ✅ **No Google Cloud required**
+- ✅ specific hardware selection (CPU/GPU)
+- ✅ Auto-scaling (including scale-to-zero to save money)
+- ✅ secure & private
 
-### Option 3: Heroku
-- ✅ Simple deployment
-- ✅ Good for prototypes
-- ❌ Sleep on free tier
+👉 **[Follow the Hugging Face Setup Guide](./docs/HUGGING_FACE_SETUP.md)** to get started.
 
-**Current Deployment**: Google Cloud Run (`us-central1`)
 
 ---
 
@@ -265,7 +252,7 @@ Both trained on Kaggle with Tesla T4 GPU (free tier).
 | Document | Description |
 |----------|-------------|
 | [SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) | Complete local development setup |
-| [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md) | Cloud deployment instructions |
+| [HUGGING_FACE_SETUP.md](./docs/HUGGING_FACE_SETUP.md) | Cloud deployment instructions |
 | [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Technical architecture details |
 
 ---
@@ -280,7 +267,6 @@ ENVIRONMENT=production
 
 ### API Server (`api-server/.env`)
 ```bash
-GOOGLE_CLOUD_PROJECT=your-project-id
 MODEL_PATH=/app/models
 PORT=8080
 ```
@@ -294,7 +280,7 @@ PORT=8080
 - [x] MedGemma 4B fine-tuning
 - [x] Flask API development
 - [x] React Native mobile app
-- [x] Google Cloud deployment
+- [x] Hugging Face deployment
 - [x] Basic UI/UX
 
 ### Phase 2: Enhancement 🔄 (In Progress)
